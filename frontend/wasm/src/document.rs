@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use crate::shims::Error;
 use crate::wrappers::{translate_key, translate_tool, Color};
 use editor::input::input_preprocessor::ModifierKeys;
@@ -9,14 +11,33 @@ use editor::LayerId;
 use graphene::layers::BlendMode;
 use wasm_bindgen::prelude::*;
 
+static EDITOR_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
+
 fn convert_error(err: editor::EditorError) -> JsValue {
 	Error::new(&err.to_string()).into()
 }
 
 fn dispatch<T: Into<Message>>(message: T) -> Result<(), JsValue> {
-	let result = crate::EDITOR_STATE.with(|state| state.borrow_mut().handle_message(message.into()));
-	if let Ok(messages) = result {
-		crate::handle_responses(messages);
+	if EDITOR_HAS_CRASHED.load(std::sync::atomic::Ordering::SeqCst) {
+		return Ok(());
+	}
+
+	let result = crate::EDITOR_STATE
+		.with(|state| state.try_borrow_mut().ok().map(|mut state| state.handle_message(message.into())))
+		.unwrap_or_else(|| {
+			Err(EditorError::Panic(String::from(
+				"An internal error occurred. Reload the site to continue.\nSee the browser's console for details and please report this by filing an issue on GitHub.",
+			)))
+		});
+	match result {
+		Ok(messages) => {
+			crate::handle_responses(messages);
+		}
+		Err(error) => {
+			EDITOR_HAS_CRASHED.store(true, std::sync::atomic::Ordering::SeqCst);
+
+			crate::handle_response(FrontendMessage::DisplayError { description: error.to_string() });
+		}
 	}
 	Ok(())
 }

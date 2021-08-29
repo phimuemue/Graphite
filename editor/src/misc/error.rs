@@ -20,6 +20,9 @@ pub enum EditorError {
 	#[error("A rollback was initiated but no transaction was in progress")]
 	NoTransactionInProgress,
 
+	#[error("Graphite panicked:\n{0}")]
+	Panic(String),
+
 	#[error("{0}")]
 	Misc(String),
 }
